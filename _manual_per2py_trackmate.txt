@@ -1,0 +1,13 @@
+1. Run FIJI Trackmate and analyze images, save table as csv file (only 1 output with both signal and XY coordinates).
+
+2. Open file START.py in IDLE (via conda-per2py environment or using batch file, see installation notes)
+
+3. Change time_factor if needed (for 6 SCN samples usually 1, otherwise use 1/2 for 0.5h, 2 for 2 hours, etc...).
+
+4. Change treatment and end_h variables as needed (i.e. start and end times in hours for analysis of selected time intervals).
+
+5. Run by F5.
+
+6. Icon will appear, click on it and browse to file from the Trackmate analysis and select it, then close the icon by clicking the cross.
+
+7. Plots are saved as png (for viewing) and svg (import to Corel Draw), output tables as csv files, create new timestamped subfolder in the same folder as the input Trackmate file.
