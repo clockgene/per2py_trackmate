@@ -2,7 +2,7 @@
 # type >>> conda activate per2py
 # type >>> spyder
 # open this file in spyder or idle and run with F5
-# v.2021.03.18
+# v.2021.04.23
 # changelog:  circular colorspace for phase plots 
 
 from __future__ import division
@@ -346,7 +346,7 @@ plt.close()
 
 N_bins = 47                                                     # how much bins, 23 is for 1 bin per hour, depends on distribution
 #colorcode = plt.cm.nipy_spectral(np.linspace(0, 1, N_bins))      #gist_ncar, RdYlBu, Accent check>>> https://matplotlib.org/examples/color/colormaps_reference.html
-colorcode = sns.husl_palette(256)[0::int(round(len(colors) / N_bins, 0))]
+colorcode = sns.husl_palette(256)[0::int(round(len(sns.husl_palette(256)) / N_bins, 0))]
 
 phase_hist, tick = np.histogram(phase, bins = N_bins, range=(0, 2*np.pi))           # need hist of phase in N bins from 0 to 23h
 theta = np.linspace(0.0, 2 * np.pi, N_bins, endpoint=False)     # this just creates number of bins spaced along circle, in radians for polar projection, use as x in histogram
