@@ -1,3 +1,7 @@
+This script is a modified version of https://github.com/johnabel/per2py written by John H. Abel and Yongli Shan.
+It formats the output by microscopy + ImageJ TrackMate plugin for use in per2py, which then analyzes circadian oscillatory data.
+For installation notes, see per2py_installation.txt.
+
 1. Run FIJI Trackmate and analyze images, save table as csv file (only 1 output with both signal and XY coordinates).
 
 2. Open file START.py in IDLE (via conda-per2py environment or using batch file, see installation notes)
