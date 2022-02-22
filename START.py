@@ -2,8 +2,8 @@
 # type >>> conda activate per2py
 # type >>> spyder
 # open this file in spyder or idle and run with F5
-# v.2021.04.23
-# changelog:  circular colorspace for phase plots 
+# v.2022.02.22
+# changelog:  period range, more plots
 
 from __future__ import division
 
@@ -25,17 +25,25 @@ import seaborn as sns
 import math
 import warnings
 
+# for testing or noncircadian data such as degradation curves o for quick tests, set to False, otherwise True
+sine_fitting = True
+
 # call global variables from module settings.py
 settings.init()
 
 # if recording 1 frame/hour, set time_factor to 1, if 1 frame/0.25h, set to 0.25
-time_factor = 1
+time_factor = 4
+
+# adjust max (circ_high) and min (circ_low) period to be fitted, default is 30 and 18 h
+circ_high = 40
+circ_low = 16
 
 # settings for truncate_t variable - plots and analyze only data from this timepoint (h)
 treatment = 0
 
-# plots and analyze only data to this timepoint (h or None), end=None >>> complete dataset
-end = None 
+# IN REAL HOURS or None (for whole dataset), plot and analyze only data to this timepoint, settings for end variable
+end_h = None 
+
 
 #
 #
@@ -97,18 +105,21 @@ for files_dict in all_inputs:
     # try eigendecomposition, if fail due to inadequate number of values, use savgol
     try:
         denoised_times, denoised_data, eigenvalues = cr.eigensmooth(detrended_times, detrended_data, ev_threshold=0.05, dim=40)
+        savgol=False
     except IndexError:        
-        denoised_times, denoised_data, eigenvalues = cr.savgolsmooth(detrended_times, detrended_data, time_factor=time_factor) 
+        denoised_times, denoised_data, eigenvalues = cr.savgolsmooth(detrended_times, detrended_data, time_factor=time_factor)
+        savgol=True
     
     # TRUNCATE from treatment to end, original function is w/o end variable
     #final_times, final_data, locations = cr.truncate_and_interpolate(denoised_times,
     #                                denoised_data, locations, truncate_t=treatment) # truncate_t=12
     
     final_times, final_data, locations = cr.truncate_and_interpolate_before(denoised_times,
-                                    denoised_data, locations, truncate_t=treatment, end=end)
+                                    denoised_data, locations, truncate_t=treatment, end_h=end_h, time_factor=time_factor)
     
     # V. LS PERIODOGRAM TEST FOR RHYTHMICITY
-    lspers, pgram_data, circadian_peaks, lspeak_periods, rhythmic_or_not = cr.LS_pgram(final_times, final_data)
+    # lspers, pgram_data, circadian_peaks, lspeak_periods, rhythmic_or_not = cr.LS_pgram(final_times, final_data)
+    lspers, pgram_data, circadian_peaks, lspeak_periods, rhythmic_or_not = cr.LS_pgram(final_times, final_data, circ_low=circ_low, circ_high=circ_high, alpha=0.05)
 
     # VI. GET A SINUSOIDAL FIT TO EACH CELL
     # use final_times, final_data
@@ -194,10 +205,10 @@ for files_dict in all_inputs:
     #trend_array = [np.mean(i) for i in trendlines.T]
     #trend_a = np.asarray(trend_array).reshape((1,len(trend_array)))
     
-    if end is None:
+    if end_h is None:
         end_t = len(raw_times)
     else:
-        end_t = int(end * 1/time_factor)    
+        end_t = int(end_h * 1/time_factor)    
     trendlines_trunc = trendlines[int(treatment*1/time_factor):end_t, :]
     trend_array = [np.mean(i) for i in trendlines_trunc.T]
     trend_a = np.asarray(trend_array).reshape((1,len(trend_array)))    
@@ -221,12 +232,16 @@ for files_dict in all_inputs:
 
     print("Generating and saving plots: ",)
     for cellidx, trackid in enumerate(cell_ids.astype(int)):
-        cr.plot_result(cellidx, raw_times, raw_data, trendlines,
-                    detrended_times, detrended_data, eigenvalues,
-                    final_times, final_data, rhythmic_or_not,
-                    lspers, pgram_data, sine_times, sine_data, r2s,
-                    settings.INPUT_DIR+f'analysis_output_{settings.timestamp}/', data_type, trackid)
-                    #INPUT_DIR, data_type)
+        try:            
+            cr.plot_result(cellidx, raw_times, raw_data, trendlines,
+                        detrended_times, detrended_data, eigenvalues,
+                        final_times, final_data, rhythmic_or_not,
+                        lspers, pgram_data, sine_times, sine_data, r2s,
+                        settings.INPUT_DIR+f'analysis_output_{settings.timestamp}/', data_type, trackid, savgol)
+                        #INPUT_DIR, data_type)
+        except IndexError:
+            print(f'{trackid} Plot failed.')
+
     print(str(np.round(timer(),1))+"s")
 
     print("All data saved. Run terminated successfully for "+data_type+'.\n')
@@ -247,13 +262,6 @@ def polarphase(x):
     else:
         r = ((x % 24)/12)*np.pi
     return r
-
-# stackoverflow filter outliers - change m as needed (2 is default, 10 filters only most extreme)
-def reject_outliers(data, m=10.):
-    d = np.abs(data - np.median(data))
-    mdev = np.median(d)
-    s = d / (mdev if mdev else 1.)
-    return data[s < m]
 
 # https://jakevdp.github.io/PythonDataScienceHandbook/04.07-customizing-colorbars.html
 def grayscale_cmap(cmap):
@@ -287,247 +295,411 @@ mpl.use('svg')                                                                  
 new_rc_params = {"font.family": 'Arial', "text.usetex": False, "svg.fonttype": 'none'}  #to store text as text, not as path in xml-coded svg file
 mpl.rcParams.update(new_rc_params)
 
+#######################################
+###### Circadian analysis #############
+#######################################
+if sine_fitting == True:    
+    
+    #############################################################
+    ####### FILTER DATA #########################################
+    #############################################################   
+    
+    # Use amplitude to filter out nans
+    outlier_reindex = ~(np.isnan(data['Amplitude']))    
+    data_filt = data[data.columns[:].tolist()][outlier_reindex]  # data w/o amp outliers
+    
+    # FILTER outliers by iqr filter: within 2.22 IQR (equiv. to z-score < 3)
+    #cols = data_filt.select_dtypes('number').columns   # pick only numeric columns
+    cols = ['Phase', 'Period', 'Amplitude', 'Decay', 'Rsq','Trend']    # pick hand selected columns
+    df_sub = data.loc[:, cols]
+    iqr = df_sub.quantile(0.75, numeric_only=False) - df_sub.quantile(0.25, numeric_only=False)
+    lim = np.abs((df_sub - df_sub.median()) / iqr) < 2.22
+    # replace outliers with nan
+    data_filt.loc[:, cols] = df_sub.where(lim, np.nan)   
+    # replace outlier-caused nans with median values    
+    data_filt['Phase'].fillna(data_filt['Phase'].median(), inplace=True)
+    data_filt['Period'].fillna(data_filt['Period'].median(), inplace=True)
+    data_filt['Amplitude'].fillna(data_filt['Amplitude'].median(), inplace=True)
+    data_filt['Decay'].fillna(data_filt['Decay'].median(), inplace=True)
+    data_filt['Rsq'].fillna(data_filt['Rsq'].median(), inplace=True)
+    data_filt['Trend'].fillna(data_filt['Trend'].median(), inplace=True)
+    
+    #########################################################################
+    ####### Single Polar Phase Plot #########################################
+    #########################################################################    
+   
+    phaseseries = data_filt['Phase'].values.flatten()                                           # plot Phase
+    phase_sdseries = 0.1/(data_filt['Rsq'].values.flatten())                                     # plot R2 related number as width
+    
+    # NAME
+    genes = data_filt['Unnamed: 0'].values.flatten().astype(int)                      # plot profile name as color
+    colorcode = plt.cm.nipy_spectral(np.linspace(0, 1, len(genes)))     # gist_ncar, RdYlBu, Accent check>>> https://matplotlib.org/examples/color/colormaps_reference.html
+    
+    # LENGTH (AMPLITUDE)
+    amp = data_filt['Amplitude'].values.flatten()                       # plot filtered Amplitude as length
+    #amp = 1                                                            # plot arbitrary number if Amp problematic
+    
+    # POSITION (PHASE)
+    #phase = [polarphase(i) for i in phaseseries]                        # if phase in in hours (cosinor)
+    phase = np.radians(phaseseries)                                    # if phase is in degrees (per2py))
+    #phase = [i for i in phaseseries]                                   # if phase is in radians already
+    
+    # WIDTH (SD, SEM, R2, etc...)
+    #phase_sd = [polarphase(i) for i in phase_sdseries]                 # if using CI or SEM of phase, which is in hours
+    phase_sd = [i for i in phase_sdseries]                              # if using Rsq/R2, maybe adjust thickness 
+    
 
-#########################################################################
-####### Single Polar Phase Plot #########################################
-#########################################################################
-
-# Use amplitude to filter out outliers or nans
-#outlier_reindex = ~(np.isnan(reject_outliers(data[['Amplitude']])))['Amplitude']          # need series of bool values for indexing 
-outlier_reindex = ~(np.isnan(data['Amplitude']))
-
-data_filt = data[data.columns[:].tolist()][outlier_reindex]                                  # data w/o amp outliers
-
-phaseseries = data_filt['Phase'].values.flatten()                                           # plot Phase
-phase_sdseries = 0.1/(data_filt['Rsq'].values.flatten())                                     # plot R2 related number as width
-
-# NAME
-genes = data_filt['Unnamed: 0'].values.flatten().astype(int)                      # plot profile name as color
-colorcode = plt.cm.nipy_spectral(np.linspace(0, 1, len(genes)))     # gist_ncar, RdYlBu, Accent check>>> https://matplotlib.org/examples/color/colormaps_reference.html
-
-# LENGTH (AMPLITUDE)
-amp = data_filt['Amplitude'].values.flatten()                       # plot filtered Amplitude as length
-#amp = 1                                                            # plot arbitrary number if Amp problematic
-
-# POSITION (PHASE)
-#phase = [polarphase(i) for i in phaseseries]                        # if phase in in hours (cosinor)
-phase = np.radians(phaseseries)                                    # if phase is in degrees (per2py))
-#phase = [i for i in phaseseries]                                   # if phase is in radians already
-
-# WIDTH (SD, SEM, R2, etc...)
-#phase_sd = [polarphase(i) for i in phase_sdseries]                 # if using CI or SEM of phase, which is in hours
-phase_sd = [i for i in phase_sdseries]                              # if using Rsq/R2, maybe adjust thickness 
-
-
-ax = plt.subplot(111, projection='polar')                                                       #plot with polar projection
-bars = ax.bar(phase, amp, width=phase_sd, color=colorcode, bottom=0, alpha=0.8)       #transparency-> alpha=0.5, , rasterized = True, bottom=0.0 to start at center, bottom=amp.max()/3 to start in 1/3 circle
-#ax.set_yticklabels([])          # this deletes radial ticks
-ax.set_theta_zero_location('N') # this puts CT=0 theta=0 to North - points upwards
-ax.set_theta_direction(-1)      #reverse direction of theta increases
-ax.set_thetagrids((0, 45, 90, 135, 180, 225, 270, 315), labels=('0', '3', '6', '9', '12', '15', '18', '21'), fontweight='bold', fontsize=12)  #set theta grids and labels, **kwargs for text properties
-ax.legend(bars, genes, fontsize=8, bbox_to_anchor=(1.1, 1.1))   # legend needs sequence of labels after object bars which contains sequence of bar plots 
-ax.set_xlabel("Circadian phase (h)", fontsize=12)
-#plt.title("Individual phases plot", fontsize=14, fontstyle='italic')
-
-
-### To save as vector svg with fonts editable in Corel ###
-plt.savefig(f'{mydir}Phase plot.svg', format = 'svg', bbox_inches = 'tight') #if using rasterized = True to reduce size, set-> dpi = 1000
-### To save as bitmap png for easy viewing ###
-plt.savefig(f'{mydir}Phase plot.png', bbox_inches = 'tight')
-#plt.show()
-plt.clf()
-plt.close()
-
-
-
-###############################################################################################
-####### Single Polar Histogram of frequency of phases #########################################
-###############################################################################################
-
-N_bins = 47                                                     # how much bins, 23 is for 1 bin per hour, depends on distribution
-#colorcode = plt.cm.nipy_spectral(np.linspace(0, 1, N_bins))      #gist_ncar, RdYlBu, Accent check>>> https://matplotlib.org/examples/color/colormaps_reference.html
-colorcode = sns.husl_palette(256)[0::int(round(len(sns.husl_palette(256)) / N_bins, 0))]
-
-phase_hist, tick = np.histogram(phase, bins = N_bins, range=(0, 2*np.pi))           # need hist of phase in N bins from 0 to 23h
-theta = np.linspace(0.0, 2 * np.pi, N_bins, endpoint=False)     # this just creates number of bins spaced along circle, in radians for polar projection, use as x in histogram
-width = (2*np.pi) / N_bins                                      # equal width for all bins that covers whole circle
-
-axh = plt.subplot(111, projection='polar')                                                      #plot with polar projection
-bars_h = axh.bar(theta, phase_hist, width=width, color=colorcode, bottom=2, alpha=0.8)          # bottom > 0 to put nice hole in centre
-
-axh.set_yticklabels([])          # this deletes radial ticks
-axh.set_theta_zero_location('N') # this puts CT=0 theta=0 to North - points upwards
-axh.set_theta_direction(-1)      #reverse direction of theta increases
-axh.set_thetagrids((0, 45, 90, 135, 180, 225, 270, 315), labels=('0', '3', '6', '9', '12', '15', '18', '21'), fontweight='bold', fontsize=12)  #set theta grids and labels, **kwargs for text properties
-axh.set_xlabel("Circadian phase (h)", fontsize=12)
-#plt.title("Phase histogram", fontsize=14, fontstyle='italic')
-
-# calculate vector sum of angles and plot "Rayleigh" vector
-a_cos = map(lambda x: math.cos(x), phase)
-a_sin = map(lambda x: math.sin(x), phase)
-uv_x = sum(a_cos)/len(phase)
-uv_y = sum(a_sin)/len(phase)
-uv_radius = np.sqrt((uv_x*uv_x) + (uv_y*uv_y))
-uv_phase = np.angle(complex(uv_x, uv_y))
-
-# Alternative from http://webspace.ship.edu/pgmarr/Geo441/Lectures/Lec%2016%20-%20Directional%20Statistics.pdf
-#v_angle = math.atan((uv_y/uv_radius)/(uv_x/uv_radius))
-
-v_angle = uv_phase     # they are the same 
-v_length = uv_radius*max(phase_hist)  # because hist is not (0,1) but (0, N in largest bin), need to increase radius
-axh.annotate('',xy=(v_angle, v_length), xytext=(v_angle,0), xycoords='data', arrowprops=dict(width=1, color='black')) #add arrow
-
-### To save as vector svg with fonts editable in Corel ###
-plt.savefig(f'{mydir}Histogram_Phase.svg', format = 'svg', bbox_inches = 'tight') #if using rasterized = True to reduce size, set-> dpi = 1000
-### To save as bitmap png for easy viewing ###
-plt.savefig(f'{mydir}Histogram_Phase.png', bbox_inches = 'tight')
-#plt.show()
-plt.clf()
-plt.close()
-
-
-###############################################################################################
-####### Single Histogram of frequency of periods ##############################################
-###############################################################################################
-
-#outlier_reindex_per = ~(np.isnan(reject_outliers(data[['Period']])))['Period'] 
-#data_filt_per = data_filt[outlier_reindex_per]
-data_filt_per = data_filt.copy()
-
-######## Single Histogram ##########
-y = "Period"
-x_lab = y
-y_lab = "Frequency"
-ylim = (0, 0.4)
-xlim = (math.floor(data_filt['Period'].min() - 1), math.ceil(data_filt_per['Period'].max() + 1))
-suptitle_all = f'{x_lab} vs {y_lab}'
-x_coord = xlim[0] + (xlim[1]-xlim[0])/8
-y_coord = ylim[1] - (ylim[1]/8)
-
-
-with warnings.catch_warnings():  # supress annoying UserWarning: tight_layout: falling back to Agg renderer
-    warnings.simplefilter("ignore")
-    fxn()
-
-    allplot = sns.FacetGrid(data_filt_per)
-    allplot = allplot.map(sns.distplot, y, kde=False)  #, Freedman–Diaconis rule
-    plt.xlim(xlim)
-    #plt.legend(title='Sex')
-    plt.xlabel(x_lab)
-    plt.ylabel(y_lab)
-    plt.text(x_coord, y_coord, f'n = ' + str(data_filt_per[y].size - data_filt_per[y].isnull().sum()) + '\nmean = ' + str(round(data_filt_per[y].mean(), 3)) + ' ± ' + str(round(data_filt_per[y].sem(), 3)) + 'h')
-    #loc = plticker.MultipleLocator(base=4.0) # this locator puts ticks at regular intervals
-    #allplot.xaxis.set_major_locator(loc)
+    # Plot causes problems
+    ax = plt.subplot(111, projection='polar')                                                       #plot with polar projection
+    bars = ax.bar(phase, amp, width=phase_sd, color=colorcode, bottom=0, alpha=0.8)       # transparency-> alpha=0.5, , rasterized = True, bottom=0.0 to start at center, bottom=amp.max()/3 to start in 1/3 circle
+    #ax.set_yticklabels([])          # this deletes radial ticks
+    ax.set_theta_zero_location('N') # this puts CT=0 theta=0 to North - points upwards
+    ax.set_theta_direction(-1)      #reverse direction of theta increases
+    ax.set_thetagrids((0, 45, 90, 135, 180, 225, 270, 315), labels=('0', '3', '6', '9', '12', '15', '18', '21'), fontweight='bold', fontsize=12)  #set theta grids and labels, **kwargs for text properties
+    #ax.legend(bars, genes, fontsize=8, bbox_to_anchor=(1.1, 1.1))   # legend needs sequence of labels after object bars which contains sequence of bar plots 
+    ax.set_xlabel("Circadian phase (h)", fontsize=12)
+    #plt.title("Invidual phases plot", fontsize=14, fontstyle='italic')
+    
     
     ### To save as vector svg with fonts editable in Corel ###
-    plt.savefig(f'{mydir}' + '\\' + 'Histogram_Period.svg', format = 'svg', bbox_inches = 'tight')
+    plt.savefig(f'{mydir}Phase plot.svg', format = 'svg', bbox_inches = 'tight') #if using rasterized = True to reduce size, set-> dpi = 1000
     ### To save as bitmap png for easy viewing ###
-    plt.savefig(f'{mydir}' + '\\' + 'Histogram_Period.png', format = 'png', bbox_inches = 'tight')
+    plt.savefig(f'{mydir}Phase plot.png', bbox_inches = 'tight')
+    #plt.show()
+    plt.clf()
+    plt.close()
+    
+
+    ###############################################################################################
+    ####### Single Polar Histogram of frequency of phases with Rayleigh vector#####################
+    ###############################################################################################
+    
+    N_bins = 47                                                     # how much bins, 23 is for 1 bin per hour, depends on distribution
+    #colorcode = plt.cm.nipy_spectral(np.linspace(0, 1, N_bins))      #gist_ncar, RdYlBu, Accent check>>> https://matplotlib.org/examples/color/colormaps_reference.html
+    #colorcode = sns.husl_palette(256)[0::int(round(len(colors) / N_bins, 0))]
+    colorcode = sns.husl_palette(256)[0::int(round(len(sns.husl_palette(256)) / N_bins, 0))]
+    
+    phase_hist, tick = np.histogram(phase, bins = N_bins, range=(0, 2*np.pi))           # need hist of phase in N bins from 0 to 23h
+    theta = np.linspace(0.0, 2 * np.pi, N_bins, endpoint=False)     # this just creates number of bins spaced along circle, in radians for polar projection, use as x in histogram
+    width = (2*np.pi) / N_bins                                      # equal width for all bins that covers whole circle
+    
+    axh = plt.subplot(111, projection='polar')                                                      #plot with polar projection
+    bars_h = axh.bar(theta, phase_hist, width=width, color=colorcode, bottom=2, alpha=0.8)          # bottom > 0 to put nice hole in centre
+    
+    axh.set_yticklabels([])          # this deletes radial ticks
+    axh.set_theta_zero_location('N') # this puts CT=0 theta=0 to North - points upwards
+    axh.set_theta_direction(-1)      #reverse direction of theta increases
+    axh.set_thetagrids((0, 45, 90, 135, 180, 225, 270, 315), labels=('0', '3', '6', '9', '12', '15', '18', '21'), fontweight='bold', fontsize=12)  #set theta grids and labels, **kwargs for text properties
+    axh.set_xlabel("Circadian phase (h)", fontsize=12)
+    #plt.title("Phase histogram", fontsize=14, fontstyle='italic')
+    
+    # calculate vector sum of angles and plot "Rayleigh" vector
+    a_cos = map(lambda x: math.cos(x), phase)
+    a_sin = map(lambda x: math.sin(x), phase)
+    uv_x = sum(a_cos)/len(phase)
+    uv_y = sum(a_sin)/len(phase)
+    uv_radius = np.sqrt((uv_x*uv_x) + (uv_y*uv_y))
+    uv_phase = np.angle(complex(uv_x, uv_y))
+    
+    # Alternative from http://webspace.ship.edu/pgmarr/Geo441/Lectures/Lec%2016%20-%20Directional%20Statistics.pdf
+    #v_angle = math.atan((uv_y/uv_radius)/(uv_x/uv_radius))
+    
+    v_angle = uv_phase     # they are the same 
+    v_length = uv_radius*max(phase_hist)  # because hist is not (0,1) but (0, N in largest bin), need to increase radius
+    axh.annotate('',xy=(v_angle, v_length), xytext=(v_angle,0), xycoords='data', arrowprops=dict(width=1, color='black')) #add arrow
+    
+    ### To save as vector svg with fonts editable in Corel ###
+    plt.savefig(f'{mydir}Histogram_Phase.svg', format = 'svg', bbox_inches = 'tight') #if using rasterized = True to reduce size, set-> dpi = 1000
+    ### To save as bitmap png for easy viewing ###
+    plt.savefig(f'{mydir}Histogram_Phase.png', bbox_inches = 'tight')
+    #plt.show()
+    plt.clf()
+    plt.close()
+    
+    
+    ###############################################################################################
+    ####### Single Histogram of frequency of periods and phases ###################################
+    ###############################################################################################    
+    data_filt_per = data_filt.copy()
+    
+    ######## Single Histogram ##########
+    y = "Period"
+    x_lab = y
+    y_lab = "Counts"
+    ylim = (0, 0.4)
+    xlim = (math.floor(data_filt['Period'].min() - 1), math.ceil(data_filt_per['Period'].max() + 1))
+    suptitle_all = f'{x_lab} vs {y_lab}'
+    x_coord = xlim[0] + (xlim[1]-xlim[0])/8
+    y_coord = ylim[1] - (ylim[1]/8)
+    
+    with warnings.catch_warnings():  # supress annoying UserWarning: tight_layout: falling back to Agg renderer
+        warnings.simplefilter("ignore")
+        fxn()
+    
+        allplot = sns.FacetGrid(data_filt_per)    
+        #plots PDF when kde=True, can be >1, https://stats.stackexchange.com/questions/4220/can-a-probability-distribution-value-exceeding-1-be-ok
+        allplot = allplot.map(sns.distplot, y, kde=False)  #, bins=n, bins='sqrt' for Square root of n, None for Freedman–Diaconis rule
+        plt.xlim(xlim)
+        #plt.legend(title='Sex')
+        plt.xlabel(x_lab)
+        plt.ylabel(y_lab)
+        plt.text(x_coord, y_coord, f'n = ' + str(data_filt_per[y].size - data_filt_per[y].isnull().sum()) + '\nmean = ' + str(round(data_filt_per[y].mean(), 3)) + ' ± ' + str(round(data_filt_per[y].sem(), 3)) + 'h')
+        #loc = plticker.MultipleLocator(base=4.0) # this locator puts ticks at regular intervals
+        #allplot.xaxis.set_major_locator(loc)
+        
+        ### To save as vector svg with fonts editable in Corel ###
+        plt.savefig(f'{mydir}' + '\\' + 'Histogram_Period.svg', format = 'svg', bbox_inches = 'tight')
+        ### To save as bitmap png for easy viewing ###
+        plt.savefig(f'{mydir}' + '\\' + 'Histogram_Period.png', format = 'png', bbox_inches = 'tight')
+        plt.clf()
+        plt.close()
+    
+    ######## Single Histogram ##########
+    y = "Phase"
+    x_lab = y
+    y_lab = "Counts"
+    ylim = (0, 0.4)
+    xlim = (0, 360)
+    suptitle_all = f'{x_lab} vs {y_lab}'
+    x_coord = xlim[0] + (xlim[1]-xlim[0])/8
+    y_coord = ylim[1] - (ylim[1]/8)
+    
+    with warnings.catch_warnings():  # supress annoying UserWarning: tight_layout: falling back to Agg renderer
+        warnings.simplefilter("ignore")
+        fxn()
+    
+        allplot = sns.FacetGrid(data_filt_per)    
+        #plots PDF when kde=True, can be >1, https://stats.stackexchange.com/questions/4220/can-a-probability-distribution-value-exceeding-1-be-ok
+        allplot = allplot.map(sns.distplot, y, kde=False)  #, bins=n, bins='sqrt' for Square root of n, None for Freedman–Diaconis rule
+        plt.xlim(xlim)
+        #plt.legend(title='Sex')
+        plt.xlabel(x_lab)
+        plt.ylabel(y_lab)
+        plt.text(x_coord, y_coord, f'n = ' + str(data_filt_per[y].size - data_filt_per[y].isnull().sum()) + '\nmean = ' + str(round(data_filt_per[y].mean(), 3)) + ' ± ' + str(round(data_filt_per[y].sem(), 3)) + 'h')
+        #loc = plticker.MultipleLocator(base=4.0) # this locator puts ticks at regular intervals
+        #allplot.xaxis.set_major_locator(loc)
+        
+        ### To save as vector svg with fonts editable in Corel ###
+        plt.savefig(f'{mydir}' + '\\' + 'Histogram_Phase_lin.svg', format = 'svg', bbox_inches = 'tight')
+        ### To save as bitmap png for easy viewing ###
+        plt.savefig(f'{mydir}' + '\\' + 'Histogram_Phase_lin.png', format = 'png', bbox_inches = 'tight')
+        plt.clf()
+        plt.close()
+        
+        
+    ############################################################
+    ###### XY coordinates Heatmap of phase #####################
+    ############################################################
+    
+    # If some outlier is stretching the heatmap colormap, adjust them manually like this:
+    #data.loc[data['Phase'] < 150, 'Phase'] = 360   # here Phase.mean()=340 but Phase.min() = 5 for 3 cells only
+    
+    # round values to 1 decimal
+    data_round = np.round(data[['X', 'Y', 'Phase']], decimals=2)  #adjust decimals if trouble with pivoting table
+    # pivot and transpose for heatmap format
+    df_heat = data_round.pivot(index='X', columns='Y', values='Phase').transpose()
+    
+    suptitle1 = "Phase of PER2 expression"
+    titleA = "XY coordinates"
+                                       
+    fig, axs = plt.subplots(ncols=2, nrows=1, sharex=False, sharey=False,  gridspec_kw={'width_ratios': [20, 1]}) 
+    #tell sns which ax to use  #cmap='coolwarm' or cmap="YlGnBu" before,  #yticklabels=n >> show every nth label
+    heat1 = sns.heatmap(df_heat.astype(float), xticklabels=5, yticklabels=5, annot=False, square=True, cbar=True, ax=axs[0], cbar_ax=axs[1], cmap = mpl.colors.ListedColormap(sns.husl_palette(256)))
+    
+    fig.suptitle(suptitle1, fontsize=12, fontweight='bold')
+    axs[0].set_title(titleA, fontsize=10, fontweight='bold')
+    axs[0].set(xlabel='X (pixels)', ylabel='Y (pixels)')
+    
+    ### To save as vector svg with fonts editable in Corel ###
+    plt.rcParams['svg.fonttype'] = 'none'    #to store text as text, not as path in xml-coded svg file, but avoid bugs that prevent rotation of ylabes when used before setting them
+    plt.savefig(f'{mydir}Heatmap_XY_Phase.svg', format = 'svg', bbox_inches = 'tight')
+    ### To save as bitmap png for easy viewing ###
+    plt.savefig(f'{mydir}Heatmap_XY_Phase.png', format = 'png')
+    plt.clf()
+    plt.close()
+    
+    
+    ############################################################
+    ###### XY coordinates Heatmap of amplitude #################
+    ############################################################
+    
+    data_a = np.round(data[['X', 'Y', 'Amplitude']], decimals=2)
+    # pivot and transpose for heatmap format
+    df_heat = data_a.pivot(index='X', columns='Y', values='Amplitude').transpose()
+    
+    suptitle1 = "Amplitude of PER2 expression"
+    titleA = "XY coordinates"
+                                        
+    fig, axs = plt.subplots(ncols=2, nrows=1, sharex=False, sharey=False,  gridspec_kw={'width_ratios': [20, 1]}) 
+    heat1 = sns.heatmap(df_heat.astype(float), xticklabels=5, yticklabels=5, annot=False, square=True, cbar=True, ax=axs[0], cbar_ax=axs[1], cmap=cmap)  #tell sns which ax to use  #cmap='coolwarm'  #yticklabels=n >> show every nth label
+    
+    fig.suptitle(suptitle1, fontsize=12, fontweight='bold')
+    axs[0].set_title(titleA, fontsize=10, fontweight='bold')
+    axs[0].set(xlabel='X (pixels)', ylabel='Y (pixels)')
+    
+    ### To save as vector svg with fonts editable in Corel ###
+    plt.rcParams['svg.fonttype'] = 'none'    #to store text as text, not as path in xml-coded svg file, but avoid bugs that prevent rotation of ylabes when used before setting them
+    plt.savefig(f'{mydir}Heatmap_XY_Amp.svg', format = 'svg', bbox_inches = 'tight')
+    ### To save as bitmap png for easy viewing ###
+    plt.savefig(f'{mydir}Heatmap_XY_Amp.png', format = 'png')
+    plt.clf()
+    plt.close()
+    
+    
+    ############################################################
+    ###### XY coordinates Heatmap of period ####################
+    ############################################################
+    
+    data_p = np.round(data[['X', 'Y', 'Period']], decimals=2)
+    # pivot and transpose for heatmap format
+    df_heat = data_p.pivot(index='X', columns='Y', values='Period').transpose()
+    
+    suptitle1 = "Period of PER2 expression"
+    titleA = "XY coordinates"
+                                        
+    fig, axs = plt.subplots(ncols=2, nrows=1, sharex=False, sharey=False,  gridspec_kw={'width_ratios': [20, 1]}) 
+    heat1 = sns.heatmap(df_heat.astype(float), xticklabels=5, yticklabels=5, annot=False, square=True, cbar=True, ax=axs[0], cbar_ax=axs[1], cmap=cmap)  #tell sns which ax to use  #cmap='coolwarm'  #yticklabels=n >> show every nth label
+    
+    fig.suptitle(suptitle1, fontsize=12, fontweight='bold')
+    axs[0].set_title(titleA, fontsize=10, fontweight='bold')
+    axs[0].set(xlabel='X (pixels)', ylabel='Y (pixels)')
+    
+    ### To save as vector svg with fonts editable in Corel ###
+    plt.rcParams['svg.fonttype'] = 'none'    #to store text as text, not as path in xml-coded svg file, but avoid bugs that prevent rotation of ylabes when used before setting them
+    plt.savefig(f'{mydir}Heatmap_XY_Period.svg', format = 'svg', bbox_inches = 'tight')
+    ### To save as bitmap png for easy viewing ###
+    plt.savefig(f'{mydir}Heatmap_XY_Period.png', format = 'png')
+    plt.clf()
+    plt.close()
+    
+    
+    
+    ############################################################
+    ###### Dual Heatmap of Raw and Denoised Signal #############
+    ############################################################
+    
+    sns.set_context("paper", font_scale=1)
+    
+    x_lab = "time"
+    suptitle = "Single-cell PER2 expression in the SCN"
+    
+    df_heat_spec1 = data_raw.iloc[:-2, 1:].transpose()    
+        
+    titleA = "raw"
+    # NonSorted Detrended traces (Looks good)
+    data_dd.pop('Frame')
+    #newi2 = data_dd.iloc[1:-2, :].astype(float).set_index('TimesH').index.astype(int)  #removes 2 last cols, starts at t=1
+    newi2 = (data_dd.iloc[1:-2, :].astype(float).reset_index().index.astype(int)) + treatment  #removes 2 last cols, starts at t=treatment
+    df_heat_spec2 = data_dd.iloc[1:-2, 1:].astype(float).set_index(newi2).transpose()  #removes 2 last cols
+    titleB = "interpolated detrended"
+    # to plot sorted by phases, use first row in data_dd to sort before transposition
+    
+    fig, axs = plt.subplots(ncols=5, nrows=1, sharex=False, sharey=False,  gridspec_kw={'width_ratios': [20, 1, 1, 20, 1]}) 
+    heat1 = sns.heatmap(df_heat_spec1.astype(float), xticklabels=24, yticklabels=False, annot=False, cbar=True, ax=axs[0], cbar_ax=axs[1], cmap=cmap)  #tell sns which ax to use  #cmap='coolwarm'  
+    heat2 = sns.heatmap(df_heat_spec2.astype(float), xticklabels=24, yticklabels=False, annot=False, cbar=True, ax=axs[3], cbar_ax=axs[4], cmap=cmap)    # yticklabels=10 #use every 10th label
+    
+    fig.suptitle(suptitle, fontsize=12, fontweight='bold')
+    axs[0].set_title(titleA, fontsize=10, fontweight='bold')
+    axs[0].set(xlabel='Time (h)')
+    axs[2].set_axis_off()  # to put more space between plots so that cbar does not overlap, use 3d axis and set it off
+    axs[3].set_title(titleB, fontsize=10, fontweight='bold')
+    axs[3].set(xlabel='Time (h)')
+    
+    plt.rcParams['svg.fonttype'] = 'none'    #to store text as text, not as path in xml-coded svg file, but avoid bugs that prevent rotation of ylabes when used before setting them
+    #plt.savefig(f'{mydir}Dual_Heatmap.svg', format = 'svg', bbox_inches = 'tight')  #too big for corel
+    plt.savefig(f'{mydir}Dual_Heatmap.png', format = 'png')
+    plt.clf()
+    plt.close()
+    
+
+
+###########################################
+###### Non-circadian analysis #############
+###########################################
+
+if sine_fitting == False:
+    
+    #Normalize MinMax only part of the signal that matches timepoints
+    start_time = 24
+    end_time = 47
+    modified_df = (data_raw.iloc[start_time:end_time, 1:] - data_raw.iloc[start_time:end_time, 1:].min()) / (data_raw.iloc[start_time:end_time, 1:].max() - data_raw.iloc[start_time:end_time, 1:].min())
+    modified_df.to_csv(f'{mydir}{settings.INPUT_FILES[0]}_signal_modified.csv', index=False)
+    
+    from scipy.optimize import curve_fit
+    
+    def func(time, y0, P, K):
+        return (y0 - P)*np.exp(-K*time) + P
+    
+    time = modified_df.index
+    p0 = [1, 0, 0.3]
+    K_list = []
+    Halflife = []
+    
+    for ycol in modified_df.iloc[:, :].columns:
+        yn = modified_df.loc[:, ycol]
+        popt, pcov = curve_fit(func, time, yn, p0)
+        K_list.append(float(f'{popt[2]}'))
+        Halflife.append(float(f'{np.log(2)/popt[2]}'))
+        #plt.plot(time, func(time, *popt), 'r-', yn, 'b-', label='fit: y0=%5.3f, P=%5.3f, K=%5.3f' % tuple(popt))
+        #plt.legend()
+        #plt.savefig(f'{mydir}decay_{ycol}.png', format = 'png')
+        #plt.clf()
+        #plt.close()
+
+    data['K'] = K_list
+    data['Halflife'] = Halflife
+    data.drop(columns=['Rhythmic', 'Phase',	'Period', 'Amplitude', 'Decay', 'Rsq']).to_csv(f'{mydir}{settings.INPUT_FILES[0]}_decay_params.csv', index=False)
+
+    #######################################################
+    ###### XY coordinates Heatmap of K ####################
+    #######################################################    
+    data_K = np.round(data[['X', 'Y', 'K']], decimals=6)
+    # pivot and transpose for heatmap format
+    df_heat = data_K.pivot(index='X', columns='Y', values='K').transpose()
+    
+    suptitle1 = "Degradation rate K of PER2"
+    titleA = "XY coordinates"
+                                        
+    fig, axs = plt.subplots(ncols=2, nrows=1, sharex=False, sharey=False,  gridspec_kw={'width_ratios': [20, 1]}) 
+    heat1 = sns.heatmap(df_heat.astype(float), xticklabels=5, yticklabels=5, annot=False, square=True, cbar=True, ax=axs[0], cbar_ax=axs[1], cmap='coolwarm')  #tell sns which ax to use  #cmap='coolwarm'  #yticklabels=n >> show every nth label
+    
+    fig.suptitle(suptitle1, fontsize=12, fontweight='bold')
+    axs[0].set_title(titleA, fontsize=10, fontweight='bold')
+    axs[0].set(xlabel='X (pixels)', ylabel='Y (pixels)')
+    
+    ### To save as vector svg with fonts editable in Corel ###
+    plt.rcParams['svg.fonttype'] = 'none'    #to store text as text, not as path in xml-coded svg file, but avoid bugs that prevent rotation of ylabes when used before setting them
+    plt.savefig(f'{mydir}Heatmap_XY_K.svg', format = 'svg', bbox_inches = 'tight')
+    ### To save as bitmap png for easy viewing ###
+    plt.savefig(f'{mydir}Heatmap_XY_K.png', format = 'png')
+    plt.clf()
+    plt.close()
+    
+    #######################################################
+    ###### XY coordinates Heatmap of Half-life ############
+    #######################################################
+    data_H = np.round(data[['X', 'Y', 'Halflife']], decimals=3)
+    # pivot and transpose for heatmap format
+    df_heat = data_H.pivot(index='X', columns='Y', values='Halflife').transpose()
+    
+    suptitle1 = "Half-life of PER2"
+    titleA = "XY coordinates"
+                                        
+    fig, axs = plt.subplots(ncols=2, nrows=1, sharex=False, sharey=False,  gridspec_kw={'width_ratios': [20, 1]}) 
+    heat1 = sns.heatmap(df_heat.astype(float), xticklabels=5, yticklabels=5, annot=False, square=True, cbar=True, ax=axs[0], cbar_ax=axs[1], cmap='inferno_r')  #tell sns which ax to use  #cmap='coolwarm'  #yticklabels=n >> show every nth label
+    
+    fig.suptitle(suptitle1, fontsize=12, fontweight='bold')
+    axs[0].set_title(titleA, fontsize=10, fontweight='bold')
+    axs[0].set(xlabel='X (pixels)', ylabel='Y (pixels)')
+    
+    ### To save as vector svg with fonts editable in Corel ###
+    plt.rcParams['svg.fonttype'] = 'none'    #to store text as text, not as path in xml-coded svg file, but avoid bugs that prevent rotation of ylabes when used before setting them
+    plt.savefig(f'{mydir}Heatmap_XY_Halflife.svg', format = 'svg', bbox_inches = 'tight')
+    ### To save as bitmap png for easy viewing ###
+    plt.savefig(f'{mydir}Heatmap_XY_Halflife.png', format = 'png')
     plt.clf()
     plt.close()
 
-############################################################
-###### XY coordinates Heatmap of phase #####################
-############################################################
 
-# round values to 1 decimal
-data_filtr = np.round(data_filt[['X', 'Y', 'Phase']], decimals=3)  # adjust decimal points if needed
-# pivot and transpose for heatmap format
-df_heat = data_filtr.pivot(index='X', columns='Y', values='Phase').transpose()
-
-suptitle1 = "Phase of PER2 expression"
-titleA = "XY SCN coordinates"
-
-df_heat_spec3 = df_heat
-                                    
-fig, axs = plt.subplots(ncols=2, nrows=1, sharex=False, sharey=False,  gridspec_kw={'width_ratios': [20, 1]}) 
-heat1 = sns.heatmap(df_heat_spec3.astype(float), xticklabels=10, yticklabels=10, annot=False, square=True, cbar=True, ax=axs[0], cbar_ax=axs[1], cmap=mpl.colors.ListedColormap(sns.husl_palette(256)))  #tell sns which ax to use  #cmap='coolwarm'  #yticklabels=n >> show every nth label
-
-fig.suptitle(suptitle1, fontsize=12, fontweight='bold')
-axs[0].set_title(titleA, fontsize=10, fontweight='bold')
-axs[0].set(xlabel='X (pixels)', ylabel='Y (pixels)')
-
-### To save as vector svg with fonts editable in Corel ###
-plt.rcParams['svg.fonttype'] = 'none'    #to store text as text, not as path in xml-coded svg file, but avoid bugs that prevent rotation of ylabes when used before setting them
-plt.savefig(f'{mydir}Heatmap_XY_Phase.svg', format = 'svg', bbox_inches = 'tight')
-### To save as bitmap png for easy viewing ###
-plt.savefig(f'{mydir}Heatmap_XY_Phase.png', format = 'png')
-plt.clf()
-plt.close()
-
-
-############################################################
-###### Dual Heatmap of Raw and Denoised Signal #############
-############################################################
-
-sns.set_context("paper", font_scale=1)
-
-x_lab = "time"
-suptitle = "Single-cell PER2 expression in the SCN"
-
-# NonSorted Raw data Heatmap
-newi1 = data_raw.iloc[:-2, 1:].astype(float).set_index('Frame').index.astype(int)
-df_heat_spec1  = data_raw.iloc[:-2, 2:].astype(float).set_index(newi1).transpose()
-titleA = "raw"
-
-# NonSorted Detrended traces (Looks good)
-data_dd.pop('Frame')
-newi2 = (data_dd.iloc[1:, :].astype(float).set_index('TimesH').index.astype(int)) + treatment
-df_heat_spec2 = data_dd.iloc[1:, 1:].astype(float).set_index(newi2).transpose()
-titleB = "interpolated detrended"
-# to plot sorted by phases, use first row in data_dd to sort before transposition
-
-fig, axs = plt.subplots(ncols=5, nrows=1, sharex=False, sharey=False,  gridspec_kw={'width_ratios': [20, 1, 1, 20, 1]}) 
-heat1 = sns.heatmap(df_heat_spec1.astype(float), xticklabels=24, yticklabels=False, annot=False, cbar=True, ax=axs[0], cbar_ax=axs[1], cmap="viridis")  #tell sns which ax to use  #cmap='coolwarm'  
-heat2 = sns.heatmap(df_heat_spec2.astype(float), xticklabels=24, yticklabels=False, annot=False, cbar=True, ax=axs[3], cbar_ax=axs[4], cmap="viridis")    # yticklabels=10 #use every 10th label
-
-fig.suptitle(suptitle, fontsize=12, fontweight='bold')
-axs[0].set_title(titleA, fontsize=10, fontweight='bold')
-axs[0].set(xlabel='Time (h)')
-axs[2].set_axis_off()  # to put more space between plots so that cbar does not overlap, use 3d axis and set it off
-axs[3].set_title(titleB, fontsize=10, fontweight='bold')
-axs[3].set(xlabel='Time (h)')
-
-plt.rcParams['svg.fonttype'] = 'none'    #to store text as text, not as path in xml-coded svg file, but avoid bugs that prevent rotation of ylabes when used before setting them
-plt.savefig(f'{mydir}Dual_Heatmap.svg', format = 'svg', bbox_inches = 'tight')
-plt.savefig(f'{mydir}Dual_Heatmap.png', format = 'png')
-plt.clf()
-plt.close()
-
-#GRAYSACLE version
-fig, axs = plt.subplots(ncols=5, nrows=1, sharex=False, sharey=False,  gridspec_kw={'width_ratios': [20, 1, 1, 20, 1]}) 
-heat1 = sns.heatmap(df_heat_spec1.astype(float), xticklabels=24, yticklabels=False, annot=False, cbar=True, ax=axs[0], cbar_ax=axs[1], cmap=cmap)  #tell sns which ax to use  #cmap='coolwarm'  
-heat2 = sns.heatmap(df_heat_spec2.astype(float), xticklabels=24, yticklabels=False, annot=False, cbar=True, ax=axs[3], cbar_ax=axs[4], cmap=cmap)    # yticklabels=10 #use every 10th label
-
-fig.suptitle(suptitle, fontsize=12, fontweight='bold')
-axs[0].set_title(titleA, fontsize=10, fontweight='bold')
-axs[0].set(xlabel='Time (h)')
-axs[2].set_axis_off()  # to put more space between plots so that cbar does not overlap, use 3d axis and set it off
-axs[3].set_title(titleB, fontsize=10, fontweight='bold')
-axs[3].set(xlabel='Time (h)')
-
-plt.rcParams['svg.fonttype'] = 'none'    #to store text as text, not as path in xml-coded svg file, but avoid bugs that prevent rotation of ylabes when used before setting them
-plt.savefig(f'{mydir}Dual_Heatmap_gray.svg', format = 'svg', bbox_inches = 'tight')
-plt.savefig(f'{mydir}Dual_Heatmap_gray.png', format = 'png')
-plt.clf()
-plt.close()
-
-
-#Detrended only
-fig, axs = plt.subplots(ncols=2, nrows=1, sharex=False, sharey=False,  gridspec_kw={'width_ratios': [20, 1]}) 
-heat2 = sns.heatmap(df_heat_spec2.astype(float), xticklabels=24, yticklabels=False, annot=False, cbar=True, ax=axs[0], cbar_ax=axs[1], cmap=cmap)    # yticklabels=10 #use every 10th label
-
-fig.suptitle(suptitle, fontsize=12, fontweight='bold')
-axs[0].set_title(titleB, fontsize=10, fontweight='bold')
-axs[0].set(xlabel='Time (h)')
-
-plt.rcParams['svg.fonttype'] = 'none'    #to store text as text, not as path in xml-coded svg file, but avoid bugs that prevent rotation of ylabes when used before setting them
-plt.savefig(f'{mydir}Dual_Heatmap_gray2.svg', format = 'svg', bbox_inches = 'tight')
-plt.savefig(f'{mydir}Dual_Heatmap_gray2.png', format = 'png')
-plt.clf()
-plt.close()
-
-
-print(f'Finished Plots at {mydir}')    
-    
+print(f'Finished Plots at {mydir}') 
 winsound.Beep(500, 800)
