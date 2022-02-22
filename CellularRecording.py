@@ -1,9 +1,8 @@
 '''
 File containing functions useful for data analysis.
-# v2021.01.26
-# Savgol filter as alternative to eigensmooth, alignment problem solved, Sin fit errors
+# v2022.02.22
+# plot 1x1 instead of EVals when Savgol filtering, mod def truncate_and_interpolate_before()
 '''
-
 
 from __future__ import division
 
@@ -279,14 +278,20 @@ def truncate_and_interpolate(times, data, locations, truncate_t=0,
     return times, outdata, locations
 
 
-def truncate_and_interpolate_before(times, data, locations, truncate_t=0, end=None,
-                                outlier_std=5):
+def truncate_and_interpolate_before(times, data, locations, truncate_t=0, end_h=None,
+                                outlier_std=5, time_factor=0.25):
     """
     Removes the first "truncate_t" h artifact and interpolates
     any missing values and rejects outliers.
     Removes data after end.
     """
     # truncate the data
+    
+    if end_h is None:
+        end = None
+    else:
+        end = int(end_h * 1/time_factor)
+    
     start = np.argmax(times-times[0]>=truncate_t)
     times = times[start:end]
     data = data[start:end]
@@ -513,7 +518,7 @@ def savgolsmooth(times, detrended_data, time_factor):
         #align denoised data in matrix
         denoised_data[nanshift:len(denoised)+nanshift, data_idx] = denoised    # this correcly shifts data with leading nans
         
-    print(str(np.round(timer(),1))+"s")    
+    print(str(np.round(timer(),1))+"s")   
     return times, denoised_data, eigenvalues_list
 
 
@@ -592,12 +597,13 @@ def sinusoidal_fitting(times, data, rhythmic_or_not, fit_times=None,
     return fit_times, sine_data, phase_data, phases, periods, amplitudes, decays, pseudo_r2s, meaningful_phases
 
 
-def plot_result(cellidx, raw_times, raw_data, trendlines, detrended_times, detrended_data, eigenvalues, final_times, final_data, rhythmic_or_not, pers, pgram_data, sine_times, sine_data, r2s, output_dir, data_type, trackid):
+def plot_result(cellidx, raw_times, raw_data, trendlines, detrended_times, detrended_data, eigenvalues, final_times, final_data, rhythmic_or_not, pers, pgram_data, sine_times, sine_data, r2s, output_dir, data_type, trackid, savgol):
     """
     Plotting utility to plot ALL data at once. This plotting function is rather messy but functional.
     """
     plo.PlotOptions(ticks='in')
     fig = plt.figure(figsize=(4,7))
+    plt.figure(figsize=(4,7))
     gs = gridspec.GridSpec(4,2)
 
     ax = plt.subplot(gs[0,0])
@@ -623,10 +629,14 @@ def plot_result(cellidx, raw_times, raw_data, trendlines, detrended_times, detre
     cx.axhline(0,color='k', ls=':')
     cx.set_xlim([0,np.max(raw_times)])
     cx.set_ylabel('Detrended (AU)')
-
-    dx.plot(eigenvalues[cellidx], marker='o',color='gold')
-    dx.axhline(0.05, color='h', ls='--', label='cutoff')
-    dx.set_ylabel('EVal (% of total)')
+    
+    if savgol==True:
+        dx.plot(1, 1, marker='o',color='gold')
+        dx.set_ylabel('EVals missing')
+    else:
+        dx.plot(eigenvalues[cellidx], marker='o',color='gold')
+        dx.axhline(0.05, color='h', ls='--', label='cutoff')
+        dx.set_ylabel('EVal (% of total)')
 
     ex.plot(final_times, final_data[:,cellidx],'h')
     ex.axhline(0,color='k', ls=':')
@@ -669,3 +679,6 @@ def plot_result(cellidx, raw_times, raw_data, trendlines, detrended_times, detre
         
         plt.close()
         plt.clf()
+        
+    plt.close()
+    plt.clf()
