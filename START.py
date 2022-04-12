@@ -2,8 +2,8 @@
 # type >>> conda activate per2py
 # type >>> spyder
 # open this file in spyder or idle and run with F5
-# v.2022.02.22
-# changelog:  period range, more plots
+# v.2022.04.12
+# changelog:  rigid Rsq filter
 
 from __future__ import division
 
@@ -329,6 +329,7 @@ if sine_fitting == True:
     #########################################################################    
    
     phaseseries = data_filt['Phase'].values.flatten()                                           # plot Phase
+    data_filt.loc[data_filt['Rsq'] < 0.1, 'Rsq'] = 0.1          # filter out too low R values to avoid memory errors 
     phase_sdseries = 0.1/(data_filt['Rsq'].values.flatten())                                     # plot R2 related number as width
     
     # NAME
