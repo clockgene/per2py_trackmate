@@ -2,8 +2,8 @@
 # type >>> conda activate per2py
 # type >>> spyder
 # open this file in spyder or idle and run with F5
-# v.2022.04.12
-# changelog:  rigid Rsq filter
+# v.2022.04.22
+# changelog:  Phase is not filtered for outliers
 
 from __future__ import division
 
@@ -310,14 +310,14 @@ if sine_fitting == True:
     
     # FILTER outliers by iqr filter: within 2.22 IQR (equiv. to z-score < 3)
     #cols = data_filt.select_dtypes('number').columns   # pick only numeric columns
-    cols = ['Phase', 'Period', 'Amplitude', 'Decay', 'Rsq','Trend']    # pick hand selected columns
+    cols = ['Period', 'Amplitude', 'Decay', 'Rsq','Trend']    # pick hand selected columns
     df_sub = data.loc[:, cols]
     iqr = df_sub.quantile(0.75, numeric_only=False) - df_sub.quantile(0.25, numeric_only=False)
     lim = np.abs((df_sub - df_sub.median()) / iqr) < 2.22
     # replace outliers with nan
     data_filt.loc[:, cols] = df_sub.where(lim, np.nan)   
     # replace outlier-caused nans with median values    
-    data_filt['Phase'].fillna(data_filt['Phase'].median(), inplace=True)
+    # data_filt['Phase'].fillna(data_filt['Phase'].median(), inplace=True)
     data_filt['Period'].fillna(data_filt['Period'].median(), inplace=True)
     data_filt['Amplitude'].fillna(data_filt['Amplitude'].median(), inplace=True)
     data_filt['Decay'].fillna(data_filt['Decay'].median(), inplace=True)
