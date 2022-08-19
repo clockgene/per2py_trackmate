@@ -2,8 +2,8 @@
 # type >>> conda activate per2py
 # type >>> spyder
 # open this file in spyder or idle and run with F5
-# v.2022.04.22
-# changelog:  Phase is not filtered for outliers
+# v.2022.08.19
+# changelog:  Rayleigh uniformity test
 
 from __future__ import division
 
@@ -407,7 +407,16 @@ if sine_fitting == True:
     
     v_angle = uv_phase     # they are the same 
     v_length = uv_radius*max(phase_hist)  # because hist is not (0,1) but (0, N in largest bin), need to increase radius
-    axh.annotate('',xy=(v_angle, v_length), xytext=(v_angle,0), xycoords='data', arrowprops=dict(width=1, color='black')) #add arrow
+    
+    # Rayleigh test for non-uniformity of circular data https://github.com/circstat/pycircstat/blob/master/pycircstat/tests.py
+    r_Rt = uv_radius
+    n_Rt = len(phaseseries)
+    R_Rt = n_Rt * r_Rt                              # compute Rayleigh's R (equ. 27.1)
+    z_Rt = R_Rt ** 2 / n_Rt                         # compute Rayleigh's z (equ. 27.2)
+    pval_Rt = np.exp(np.sqrt(1 + 4 * n_Rt + 4 * (n_Rt ** 2 - R_Rt ** 2)) - (1 + 2 * n_Rt))     # compute p value using approxation in Zar, p. 617
+    
+    #add arrow and test rounded pvalue
+    axh.annotate(f'p={np.format_float_scientific(pval_Rt, precision=4)}',xy=(v_angle, v_length), xytext=(v_angle,0), xycoords='data', arrowprops=dict(width=1, color='black'))    
     
     ### To save as vector svg with fonts editable in Corel ###
     plt.savefig(f'{mydir}Histogram_Phase.svg', format = 'svg', bbox_inches = 'tight') #if using rasterized = True to reduce size, set-> dpi = 1000
