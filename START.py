@@ -2,7 +2,7 @@
 # type >>> conda activate per2py
 # type >>> spyder
 # open this file in spyder or idle and run with F5
-# v.2022.08.19
+# v.2022.08.24
 # changelog:  Rayleigh uniformity test
 
 from __future__ import division
