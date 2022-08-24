@@ -416,8 +416,9 @@ if sine_fitting == True:
     pval_Rt = np.exp(np.sqrt(1 + 4 * n_Rt + 4 * (n_Rt ** 2 - R_Rt ** 2)) - (1 + 2 * n_Rt))     # compute p value using approxation in Zar, p. 617
     
     #add arrow and test rounded pvalue
-    axh.annotate(f'p={np.format_float_scientific(pval_Rt, precision=4)}',xy=(v_angle, v_length), xytext=(v_angle,0), xycoords='data', arrowprops=dict(width=1, color='black'))    
-    
+    axh.annotate('',xy=(v_angle, v_length), xytext=(v_angle,0), xycoords='data', arrowprops=dict(width=1, color='black'))
+    axh.annotate(f'p={np.format_float_scientific(pval_Rt, precision=4)}', xy=(v_angle, v_length))
+
     ### To save as vector svg with fonts editable in Corel ###
     plt.savefig(f'{mydir}Histogram_Phase.svg', format = 'svg', bbox_inches = 'tight') #if using rasterized = True to reduce size, set-> dpi = 1000
     ### To save as bitmap png for easy viewing ###
